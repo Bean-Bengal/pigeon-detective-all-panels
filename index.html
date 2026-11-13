@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pigeon Detective: All Panels</title>
+<style>
+  body { font-family: Georgia, serif; background: #f1ead8; color: #2b2b2b; margin: 0; padding: 24px; }
+  h1 { margin: 0 0 4px; font-size: 28px; }
+  h2 { font-size: 18px; margin: 24px 0 6px; }
+  .sub { margin: 0 0 16px; font-size: 14px; color: #6a6250; }
+  #summary { font-size: 16px; font-weight: bold; margin: 0 0 6px; }
+  #check, #selftest, #keytest, #orderResult { font-size: 13px; margin: 0 0 12px; padding: 6px 10px; display: inline-block; border-radius: 6px; }
+  #selftest, #keytest { display: block; max-width: 680px; margin-bottom: 8px; }
+  #orderResult { display: block; max-width: 680px; }
+  .ok { background: #dcefd5; color: #24501a; }
+  .bad { background: #f8d7da; color: #7a1f2b; }
+  #list { list-style: none; margin: 0; padding: 0; max-width: 700px; }
+  .row { display: flex; align-items: center; gap: 12px; background: #fffdf5; border: 3px solid #2b2b2b; padding: 8px 12px; margin-bottom: 8px; }
+  .row .num { background: #2b2b2b; color: #fffdf5; font-size: 14px; min-width: 28px; text-align: center; padding: 3px 6px; }
+  .row .text { flex: 1; font-size: 15px; }
+  .row .text label { cursor: pointer; display: block; }
+  .row .line { display: block; font-style: italic; font-size: 13px; color: #555; margin-top: 3px; }
+  .row input { width: 22px; height: 22px; cursor: pointer; }
+  .row.clue { border-color: #d1495b; background: #fff0f0; }
+  .row.clue .num { background: #d1495b; }
+  .row.done { opacity: 0.55; }
+  .row.done .scene { text-decoration: line-through; }
+  .tag { background: #d1495b; color: white; font-size: 11px; padding: 2px 6px; border-radius: 8px; white-space: nowrap; }
+  .drawn { font-size: 12px; color: #6a6250; }
+  #orderBox { display: block; width: 100%; max-width: 680px; box-sizing: border-box; font: 16px Georgia, serif; padding: 8px; border: 3px solid #2b2b2b; background: #fffdf5; }
+  button { font: 14px Georgia, serif; padding: 6px 12px; margin: 8px 6px 10px 0; border: 3px solid #2b2b2b; background: #fffdf5; cursor: pointer; }
+</style>
+</head>
+<body>
+  <h1>The Pigeon Who Thinks He's a Detective</h1>
+  <p class="sub">Tick a panel once it's drawn. The red one has the tissue clue.</p>
+  <p id="selftest" role="status"></p>
+  <p id="keytest" role="status"></p>
+  <p id="summary" aria-live="polite"></p>
+  <p id="check" role="status"></p>
+  <ol id="list"></ol>
+
+  <h2>Check my reading order</h2>
+  <p class="sub">Type panel numbers in the order you think they go, with commas or spaces.</p>
+  <label for="orderBox" class="sub">Your order</label>
+  <input id="orderBox" type="text" value="1, 2, 3, 4, 5, 6, 7, 8">
+  <button id="checkOrder" type="button">Check order</button>
+  <button id="fillTrue" type="button">Fill in the true order</button>
+  <p id="orderResult" role="status" aria-live="polite"></p>
+  <p id="keyNote" class="sub" aria-live="polite"></p>
+
+<script>
+  var panels = [
+    { n: 1, scene: "Morning. Pigeon on a lamp post, wearing a tiny hat.", line: "Something is wrong in this park." },
+    { n: 2, scene: "A bench. Crumbs everywhere, but no sandwich.", line: "The sandwich is gone." },
+    { n: 3, scene: "Pigeon squints at the crumbs.", line: "Too neat. Somebody tidied up." },
+    { n: 4, scene: "Under the bench, a crumpled tissue.", line: "Hm. A tissue. Used.", clue: true },
+    { n: 5, scene: "Pigeon holds the tissue up to the light.", line: "Sniffles. The culprit has a cold." },
+    { n: 6, scene: "A line of suspects: a duck, a jogger, a squirrel.", line: "Who here is sneezing?" },
+    { n: 7, scene: "The squirrel sneezes. Everyone looks.", line: "...it was me." },
+    { n: 8, scene: "Pigeon, satisfied, tips hat.", line: "Case closed." }
+  ];
+
+  var STORE_KEY = "pigeonPanelsDrawn";
+  var drawn = {};
+  var lastSummary = "";
+
+  try {
+    var saved = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
+    if (saved && typeof saved === "object") drawn = saved;
+  } catch (e) { drawn = {}; }
+
+  function save() {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(drawn)); } catch (e) {}
+  }
+
+  function validate(list) {
+    var seen = {};
+    for (var i = 0; i < list.length; i++) {
+      var n = list[i].n;
+      if (typeof n !== "number" || n % 1 !== 0 || n < 1) return "Panel " + (i + 1) + " in the source has a bad number (" + n + ").";
+      if (seen[n]) return "Panel number " + n + " is used twice.";
+      seen[n] = true;
+    }
+    return "";
+  }
+
+  function sortPanels(list) {
+    return list.slice().sort(function (a, b) { return a.n - b.n; });
+  }
+
+  function checkSorted(list) {
+    for (var i = 1; i < list.length; i++) {
+      if (list[i - 1].n >= list[i].n) return { ok: false, msg: "Order check failed: panel " + list[i - 1].n + " comes before panel " + list[i].n + "." };
+    }
+    for (var j = 0; j < list.length; j++) {
+      if (list[j].n !== j + 1) return { ok: false, msg: "Order check: sorted fine, but a number is missing near panel " + list[j].n + "." };
+    }
+    return { ok: true, msg: "Order check passed: all " + list.length + " panels are in order, 1 to " + list.length + "." };
+  }
+
+  function parseOrder(text) {
+    var parts = String(text).split(/[\s,]+/).filter(function (s) { return s !== ""; });
+    var nums = [], bad = [];
+    parts.forEach(function (s) {
+      if (/^\d+$/.test(s)) nums.push(parseInt(s, 10)); else bad.push(s);
+    });
+    return { nums: nums, bad: bad };
+  }
+
+  function checkReading(text, truth) {
+    var p = parseOrder(text);
+    var msgs = [];
+    var known = {};
+    truth.forEach(function (t) { known[t.n] = true; });
+    if (p.bad.length) msgs.push("Not numbers: " + p.bad.join(", ") + ".");
+    var count = {};
+    p.nums.forEach(function (n) { count[n] = (count[n] || 0) + 1; });
+    var unknown = [], repeated = [], missing = [];
+    Object.keys(count).forEach(function (k) {
+      if (!known[k]) unknown.push(k);
+      if (count[k] > 1) repeated.push(k);
+    });
+    truth.forEach(function (t) { if (!count[t.n]) missing.push(t.n); });
+    if (unknown.length) msgs.push("No such panel: " + unknown.join(", ") + ".");
+    if (repeated.length) msgs.push("Used more than once: " + repeated.join(", ") + ".");
+    if (missing.length) msgs.push("Left out: " + missing.join(", ") + ".");
+    var tissuePos = -1, clueN = null;
+    truth.forEach(function (t) { if (t.clue) clueN = t.n; });
+    if (clueN !== null) tissuePos = p.nums.indexOf(clueN) + 1;
+    if (!msgs.length) {
+      for (var i = 0; i < truth.length; i++) {
+        if (p.nums[i] !== truth[i].n) {
+          msgs.push("First difference at spot " + (i + 1) + ": you have panel " + p.nums[i] + ", it should be panel " + truth[i].n + ".");
+          break;
+        }
+      }
+    }
+    var ok = msgs.length === 0;
+    if (ok) msgs.push("Right order. The ending runs the right way round.");
+    if (clueN !== null) {
+      msgs.push(tissuePos > 0 ? "Tissue panel (" + clueN + ") sits in spot " + tissuePos + " of " + truth.length + "." : "Tissue panel (" + clueN + ") isn't in your order.");
+    }
+    return { ok: ok, msgs: msgs, tissuePos: tissuePos };
+  }
+
+  // The 30 ms rule, as one pure function: a press is a double tap when the
+  // gap since the last accepted press is 0 or more and strictly under windowMs.
+  var GUARD_MS = 30;
+  function tooClose(gap, windowMs) {
+    return gap >= 0 && gap < windowMs;
+  }
+  // Deliberately broken copy: window is off by one (<= instead of <).
+  function tooCloseBroken(gap, windowMs) {
+    return gap >= 0 && gap <= windowMs;
+  }
+
+  function makeGuard(rule) {
+    return function (key, time, state) {
+      if (state.key === key && rule(time - state.time, GUARD_MS)) return true;
+      state.key = key;
+      state.time = time;
+      return false;
+    };
+  }
+  var isDoubleTap = makeGuard(tooClose);
+  var isDoubleTapBroken = makeGuard(tooCloseBroken);
+
+  var keyCases = [
+    ["same key 5ms apart is blocked", [["3", 0], ["3", 5]], [false, true]],
+    ["same key 200ms apart is kept", [["3", 0], ["3", 200]], [false, false]],
+    ["different keys 5ms apart are kept", [["3", 0], ["4", 5]], [false, false]],
+    ["triple burst blocks both extras", [["7", 0], ["7", 4], ["7", 9]], [false, true, true]],
+    ["blocked press doesn't extend the window", [["1", 0], ["1", 20], ["1", 40]], [false, true, false]],
+    ["29 ms apart is blocked", [["2", 0], ["2", 29]], [false, true]],
+    ["exactly 30 ms apart is kept", [["2", 0], ["2", 30]], [false, false]],
+    ["31 ms apart is kept", [["2", 0], ["2", 31]], [false, false]]
+  ];
+
+  function runKeyCases(guard) {
+    var fails = [];
+    keyCases.forEach(function (c) {
+      var st = { key: null, time: -1000 };
+      var got = c[1].map(function (k) { return guard(k[0], k[1], st); });
+      if (JSON.stringify(got) !== JSON.stringify(c[2])) fails.push(c[0]);
+    });
+    return fails;
+  }
+
+  function keyTest() {
+    var real = runKeyCases(isDoubleTap);
+    var broken = runKeyCases(isDoubleTapBroken);
+    return { total: keyCases.length, fails: real, brokenFails: broken };
+  }
+
+  function selfTest() {
+    var t = sortPanels(panels);
+    var cases = [
+      ["right order", "1 2 3 4 5 6 7 8", true, 4],
+      ["commas", "1,2,3,4,5,6,7,8", true, 4],
+      ["swapped pair", "1,2,4,3,5,6,7,8", false, 3],
+      ["missing one", "1,2,3,5,6,7,8", false, 0],
+      ["repeated", "1,2,3,4,4,5,6,7,8", false, 4],
+      ["unknown panel", "1,2,3,4,5,6,7,9", false, 4],
+      ["junk word", "1,2,x,3,4,5,6,7,8", false, 4]
+    ];
+    var fails = [];
+    cases.forEach(function (c) {
+      var r = checkReading(c[1], t);
+      if (r.ok !== c[2] || r.tissuePos !== c[3]) fails.push(c[0]);
+    });
+    return { total: cases.length, fails: fails };
+  }
+
+  function updateSummary() {
+    var left = [];
+    for (var i = 0; i < sorted.length; i++) if (!drawn[sorted[i].n]) left.push(sorted[i].n);
+    var text;
+    if (left.length === 0) text = "All panels drawn. Case closed.";
+    else text = left.length + " of " + sorted.length + " still to draw: panel" + (left.length > 1 ? "s " : " ") + left.join(", ") + ".";
+    if (text !== lastSummary) {
+      document.getElementById("summary").textContent = text;
+      lastSummary = text;
+    }
+  }
+
+  var problem = validate(panels);
+  var sorted = [];
+  var checkBox = document.getElementById("check");
+  var listEl = document.getElementById("list");
+
+  if (problem) {
+    checkBox.textContent = "Can't sort: " + problem;
+    checkBox.className = "bad";
+  } else {
+    sorted = sortPanels(panels);
+    var result = checkSorted(sorted);
+    checkBox.textContent = result.msg;
+    checkBox.className = result.ok ? "ok" : "bad";
+
+    sorted.forEach(function (p) {
+      var li = document.createElement("li");
+      li.className = "row" + (p.clue ? " clue" : "") + (drawn[p.n] ? " done" : "");
+      var num = document.createElement("div");
+      num.className = "num";
+      num.textContent = p.n;
+      var text = document.createElement("div");
+      text.className = "text";
+      var label = document.createElement("label");
+      label.htmlFor = "panel" + p.n;
+      var scene = document.createElement("span");
+      scene.className = "scene";
+      scene.textContent = p.scene;
+      var line = document.createElement("span");
+      line.className = "line";
+      line.textContent = '"' + p.line + '"';
+      label.appendChild(scene);
+      label.appendChild(line);
+      text.appendChild(label);
+      var box = document.createElement("input");
+      box.type = "checkbox";
+      box.id = "panel" + p.n;
+      box.checked = !!drawn[p.n];
+      box.setAttribute("aria-label", "Panel " + p.n + " drawn");
+      box.addEventListener("change", function () {
+        if (box.checked) drawn[p.n] = true; else delete drawn[p.n];
+        li.className = "row" + (p.clue ? " clue" : "") + (box.checked ? " done" : "");
+        save();
+        updateSummary();
+      });
+      li.appendChild(num);
+      li.appendChild(text);
+      if (p.clue) {
+        var tag = document.createElement("span");
+        tag.className = "tag";
+        tag.textContent = "TISSUE CLUE";
+        li.appendChild(tag);
+      }
+      var d = document.createElement("span");
+      d.className = "drawn";
+      d.textContent = "drawn";
+      li.appendChild(d);
+      li.appendChild(box);
+      listEl.appendChild(li);
+    });
+    updateSummary();
+  }
+
+  var st = document.getElementById("selftest");
+  try {
+    var s = selfTest();
+    if (s.fails.length) { st.textContent = "Self-test FAILED: " + s.fails.join(", "); st.className = "bad"; }
+    else { st.textContent = "Self-test passed: " + s.total + " of " + s.total + " order checks behave."; st.className = "ok"; }
+  } catch (e) {
+    st.textContent = "Self-test crashed: " + e.message;
+    st.className = "bad";
+  }
+
+  var kt = document.getElementById("keytest");
+  try {
+    var k = keyTest();
+    if (k.fails.length) {
+      kt.textContent = "Key guard test FAILED: " + k.fails.join("; ");
+      kt.className = "bad";
+    } else if (!k.brokenFails.length) {
+      kt.textContent = "Key guard test untrustworthy: the broken copy (window off by one) passed every case, so these checks can't tell.";
+      kt.className = "bad";
+    } else {
+      kt.textContent = "Key guard test passed: " + k.total + " of " + k.total + " cases behave (repeats under " + GUARD_MS + " ms are ignored), and the broken off-by-one copy was rejected on " + k.brokenFails.length + " case" + (k.brokenFails.length > 1 ? "s" : "") + " (" + k.brokenFails.join("; ") + ").";
+      kt.className = "ok";
+    }
+  } catch (e) {
+    kt.textContent = "Key guard test crashed: " + e.message;
+    kt.className = "bad";
+  }
+
+  var orderBox = document.getElementById("orderBox");
+  var orderResult = document.getElementById("orderResult");
+  var keyNote = document.getElementById("keyNote");
+  var keyState = { key: null, time: -1000 };
+  var blocked = 0;
+  function runCheck() {
+    if (!sorted.length) { orderResult.textContent = "Panels have a problem, fix that first."; orderResult.className = "bad"; return; }
+    var r = checkReading(orderBox.value, sorted);
+    orderResult.textContent = r.msgs.join(" ");
+    orderResult.className = r.ok ? "ok" : "bad";
+  }
+  document.getElementById("checkOrder").addEventListener("click", runCheck);
+  document.getElementById("fillTrue").addEventListener("click", function () {
+    orderBox.value = sorted.map(function (p) { return p.n; }).join(", ");
+    runCheck();
+  });
+  orderBox.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { runCheck(); return; }
+    if (e.key && e.key.length === 1 && !e.repeat && isDoubleTap(e.key, e.timeStamp, keyState)) {
+      e.preventDefault();
+      blocked++;
+      keyNote.textContent = "Ignored " + blocked + " doubled keystroke" + (blocked > 1 ? "s" : "") + " in the order box.";
+    }
+  });
+</script>
+</body>
+</html>
