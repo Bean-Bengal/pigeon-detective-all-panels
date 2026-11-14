@@ -10,8 +10,8 @@
   h2 { font-size: 18px; margin: 24px 0 6px; }
   .sub { margin: 0 0 16px; font-size: 14px; color: #6a6250; }
   #summary { font-size: 16px; font-weight: bold; margin: 0 0 6px; }
-  #check, #selftest, #keytest, #orderResult { font-size: 13px; margin: 0 0 12px; padding: 6px 10px; display: inline-block; border-radius: 6px; }
-  #selftest, #keytest { display: block; max-width: 680px; margin-bottom: 8px; }
+  #check, #selftest, #keytest, #pawltest, #orderResult { font-size: 13px; margin: 0 0 12px; padding: 6px 10px; display: inline-block; border-radius: 6px; }
+  #selftest, #keytest, #pawltest { display: block; max-width: 680px; margin-bottom: 8px; }
   #orderResult { display: block; max-width: 680px; }
   .ok { background: #dcefd5; color: #24501a; }
   .bad { background: #f8d7da; color: #7a1f2b; }
@@ -37,6 +37,7 @@
   <p class="sub">Tick a panel once it's drawn. The red one has the tissue clue.</p>
   <p id="selftest" role="status"></p>
   <p id="keytest" role="status"></p>
+  <p id="pawltest" role="status"></p>
   <p id="summary" aria-live="polite"></p>
   <p id="check" role="status"></p>
   <ol id="list"></ol>
@@ -145,13 +146,10 @@
     return { ok: ok, msgs: msgs, tissuePos: tissuePos };
   }
 
-  // The 30 ms rule, as one pure function: a press is a double tap when the
-  // gap since the last accepted press is 0 or more and strictly under windowMs.
   var GUARD_MS = 30;
   function tooClose(gap, windowMs) {
     return gap >= 0 && gap < windowMs;
   }
-  // Deliberately broken copy: window is off by one (<= instead of <).
   function tooCloseBroken(gap, windowMs) {
     return gap >= 0 && gap <= windowMs;
   }
@@ -192,6 +190,57 @@
     var real = runKeyCases(isDoubleTap);
     var broken = runKeyCases(isDoubleTapBroken);
     return { total: keyCases.length, fails: real, brokenFails: broken };
+  }
+
+  // Ratchet rule: forward always turns, backward stops at the face of the current tooth.
+  function tryMove(angle, delta, n) {
+    if (delta >= 0) return angle + delta;
+    var tooth = 360 / n;
+    var face = Math.floor(angle / tooth + 1e-9) * tooth;
+    return Math.max(angle + delta, face);
+  }
+  // Deliberately broken copy: no pawl, backward moves freely.
+  function tryMoveBroken(angle, delta, n) {
+    return angle + delta;
+  }
+
+  function pawlCases(n) {
+    var t = 360 / n;
+    var face = t * 2;
+    return [
+      ["n=" + n + " forward a whole tooth turns", [face + t / 2, t], face + t / 2 + t],
+      ["n=" + n + " forward a tiny step turns", [face + 1, 0.5], face + 1.5],
+      ["n=" + n + " forward from the face turns", [face, 0.25], face + 0.25],
+      ["n=" + n + " backward from mid-tooth stops at face", [face + t / 2, -t], face],
+      ["n=" + n + " backward a full tooth from mid-tooth stops at face", [face + t * 0.9, -t], face],
+      ["n=" + n + " backward just past face stops at face", [face + 0.4, -5], face],
+      ["n=" + n + " backward sitting on face stays", [face, -1], face],
+      ["n=" + n + " small backward inside tooth is allowed", [face + 0.4 * t, -0.1 * t], face + 0.3 * t]
+    ];
+  }
+
+  function runPawl(fn) {
+    var fails = [], total = 0;
+    [6, 12, 20].forEach(function (n) {
+      pawlCases(n).forEach(function (c) {
+        total++;
+        var got = fn(c[1][0], c[1][1], n);
+        if (Math.abs(got - c[2]) > 1e-9) fails.push(c[0]);
+      });
+      // forward, then backward (held), then forward again
+      total++;
+      var t = 360 / n;
+      var a = fn(0, t * 1.5, n);
+      a = fn(a, -t, n);
+      var held = Math.abs(a - t) < 1e-9;
+      a = fn(a, t, n);
+      if (!held || Math.abs(a - 2 * t) > 1e-9) fails.push("n=" + n + " forward, blocked back, forward again");
+    });
+    return { total: total, fails: fails };
+  }
+
+  function pawlTest() {
+    return { real: runPawl(tryMove), broken: runPawl(tryMoveBroken) };
   }
 
   function selfTest() {
@@ -313,6 +362,24 @@
   } catch (e) {
     kt.textContent = "Key guard test crashed: " + e.message;
     kt.className = "bad";
+  }
+
+  var pt = document.getElementById("pawltest");
+  try {
+    var pr = pawlTest();
+    if (pr.real.fails.length) {
+      pt.textContent = "Ratchet pawl test FAILED: " + pr.real.fails.join("; ");
+      pt.className = "bad";
+    } else if (!pr.broken.fails.length) {
+      pt.textContent = "Ratchet pawl test untrustworthy: the no-pawl copy passed every case, so these checks can't tell.";
+      pt.className = "bad";
+    } else {
+      pt.textContent = "Ratchet pawl test passed: " + pr.real.total + " of " + pr.real.total + " checks at 6, 12 and 20 teeth (forward always turns, backward stops at the face of the tooth), and the copy with no pawl failed " + pr.broken.fails.length + " of them.";
+      pt.className = "ok";
+    }
+  } catch (e) {
+    pt.textContent = "Ratchet pawl test crashed: " + e.message;
+    pt.className = "bad";
   }
 
   var orderBox = document.getElementById("orderBox");
