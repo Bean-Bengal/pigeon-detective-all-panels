@@ -33,6 +33,7 @@
 </style>
 </head>
 <body>
+<script data-bean-store>(function(){if(typeof location!=='undefined'&&location&&location.protocol==='about:'&&typeof document!=='undefined'&&document.addEventListener){document.addEventListener('click',function(e){var a=e.target&&e.target.closest&&e.target.closest('a[href^="#"]');if(!a||a.target==='_blank')return;e.preventDefault();try{location.hash=a.getAttribute('href')}catch(x){}},true)}if(typeof window==='undefined')return;try{window.localStorage.getItem('x');return}catch(e){}var d=Object.assign({},window.__BEAN_SAVED||{});function post(){try{parent.postMessage({type:'bean-store',data:d},'*')}catch(e){}}var ls={getItem:function(k){return Object.prototype.hasOwnProperty.call(d,k)?d[k]:null},setItem:function(k,v){d[k]=String(v);post()},removeItem:function(k){delete d[k];post()},clear:function(){d={};post()},key:function(i){return Object.keys(d)[i]||null}};Object.defineProperty(ls,'length',{get:function(){return Object.keys(d).length}});try{Object.defineProperty(window,'localStorage',{value:ls,configurable:true})}catch(e){}})();</script>
   <h1>The Pigeon Who Thinks He's a Detective</h1>
   <p class="sub">Tick a panel once it's drawn. The red one has the tissue clue.</p>
   <p id="selftest" role="status"></p>
@@ -203,6 +204,13 @@
   function tryMoveBroken(angle, delta, n) {
     return angle + delta;
   }
+  // Second broken copy: pawl holds one tooth too high (face off by one tooth).
+  function tryMoveHigh(angle, delta, n) {
+    if (delta >= 0) return angle + delta;
+    var tooth = 360 / n;
+    var face = (Math.floor(angle / tooth + 1e-9) + 1) * tooth;
+    return Math.max(angle + delta, Math.min(face, angle));
+  }
 
   function pawlCases(n) {
     var t = 360 / n;
@@ -215,7 +223,9 @@
       ["n=" + n + " backward a full tooth from mid-tooth stops at face", [face + t * 0.9, -t], face],
       ["n=" + n + " backward just past face stops at face", [face + 0.4, -5], face],
       ["n=" + n + " backward sitting on face stays", [face, -1], face],
-      ["n=" + n + " small backward inside tooth is allowed", [face + 0.4 * t, -0.1 * t], face + 0.3 * t]
+      ["n=" + n + " small backward inside tooth is allowed", [face + 0.4 * t, -0.1 * t], face + 0.3 * t],
+      ["n=" + n + " backward landing exactly on face is allowed", [face + t / 2, -t / 2], face],
+      ["n=" + n + " big backward spin from five teeth up stops at its own face", [face + 3.5 * t, -10 * t], face + 3 * t]
     ];
   }
 
@@ -240,7 +250,7 @@
   }
 
   function pawlTest() {
-    return { real: runPawl(tryMove), broken: runPawl(tryMoveBroken) };
+    return { real: runPawl(tryMove), broken: runPawl(tryMoveBroken), high: runPawl(tryMoveHigh) };
   }
 
   function selfTest() {
@@ -370,11 +380,11 @@
     if (pr.real.fails.length) {
       pt.textContent = "Ratchet pawl test FAILED: " + pr.real.fails.join("; ");
       pt.className = "bad";
-    } else if (!pr.broken.fails.length) {
-      pt.textContent = "Ratchet pawl test untrustworthy: the no-pawl copy passed every case, so these checks can't tell.";
+    } else if (!pr.broken.fails.length || !pr.high.fails.length) {
+      pt.textContent = "Ratchet pawl test untrustworthy: a broken copy (" + (!pr.broken.fails.length ? "no pawl" : "pawl one tooth high") + ") passed every case, so these checks can't tell.";
       pt.className = "bad";
     } else {
-      pt.textContent = "Ratchet pawl test passed: " + pr.real.total + " of " + pr.real.total + " checks at 6, 12 and 20 teeth (forward always turns, backward stops at the face of the tooth), and the copy with no pawl failed " + pr.broken.fails.length + " of them.";
+      pt.textContent = "Ratchet pawl test passed: " + pr.real.total + " of " + pr.real.total + " checks at 6, 12 and 20 teeth (forward always turns, backward stops at the face of the tooth, including exact edges and big spins). The no-pawl copy failed " + pr.broken.fails.length + " and the one-tooth-high copy failed " + pr.high.fails.length + ".";
       pt.className = "ok";
     }
   } catch (e) {
